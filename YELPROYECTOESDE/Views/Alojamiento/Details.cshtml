@@ -1,0 +1,52 @@
+﻿@model YELPROYECTOESDE.Models.Alojamiento
+
+@{
+    ViewData["Title"] = "Detalles del Alojamiento";
+}
+
+<div class="container mt-4">
+    <div class="card shadow-sm">
+        <div class="row g-0">
+            <div class="col-md-4">
+                <img src="@(string.IsNullOrEmpty(Model.ImagenUrl) ? "/images/default-alojamiento.jpg" : Model.ImagenUrl)"
+                     class="img-fluid rounded-start"
+                     alt="@Model.Nombre"
+                     style="height: 100%; object-fit: cover;">
+            </div>
+            <div class="col-md-8">
+                <div class="card-body">
+                    <h3 class="card-title">@Model.Nombre</h3>
+                    <div class="mb-3">
+                        <span class="badge bg-primary">@Model.Tipo.Nombre</span>
+                        <span class="badge bg-info">
+                            <i class="fas fa-user"></i> @Model.Capacidad personas
+                        </span>
+                    </div>
+
+                    <p class="card-text">@Model.Descripcion</p>
+
+                    <div class="mt-4">
+                        <h5>Comodidades</h5>
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var detalle in Model.DetallesAlojamientoComodidad)
+                            {
+                                <span class="badge bg-secondary">
+                                    <i class="fas fa-check"></i> @detalle.Comodidad.Nombre
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <a asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-primary">
+                            <i class="fas fa-edit"></i> Editar
+                        </a>
+                        <a asp-action="Index" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Volver
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

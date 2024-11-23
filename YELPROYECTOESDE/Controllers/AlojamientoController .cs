@@ -145,7 +145,6 @@ public class AlojamientoController : Controller
             return View(alojamiento);
         }
     }
-
     // GET: Alojamiento/Edit/5
     public async Task<IActionResult> Edit(int? id)
     {
@@ -156,6 +155,8 @@ public class AlojamientoController : Controller
 
         var alojamiento = await _context.Alojamientos
             .Include(a => a.DetallesAlojamientoComodidad)
+                .ThenInclude(d => d.Comodidad)
+            .Include(a => a.Tipo)
             .FirstOrDefaultAsync(a => a.Id == id);
 
         if (alojamiento == null)
@@ -163,91 +164,124 @@ public class AlojamientoController : Controller
             return NotFound();
         }
 
-        ViewBag.TipoId = new SelectList(_context.Tipos, "Id", "Nombre", alojamiento.TipoId);
-        ViewBag.Comodidades = new SelectList(_context.Comodidades.Where(c => c.Estado), "Id", "Nombre");
+        var tipos = await _context.Tipos.ToListAsync();
+        var comodidades = await _context.Comodidades.Where(c => c.Estado).ToListAsync();
+
+        ViewBag.TipoId = new SelectList(tipos, "Id", "Nombre", alojamiento.TipoId);
+        ViewBag.Comodidades = new MultiSelectList(comodidades, "Id", "Nombre",
+            alojamiento.DetallesAlojamientoComodidad.Select(d => d.ComodidadId));
+
         return View(alojamiento);
     }
 
     // POST: Alojamiento/Edit/5
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Edit(int id, Alojamiento alojamiento, IFormFile imagen, int[] ComodidadesSeleccionadas)
+    public async Task<IActionResult> Edit(int id, [Bind("Id,Nombre,Descripcion,Capacidad,TipoId,ImagenUrl")] Alojamiento alojamiento,
+        IFormFile imagen, int[] ComodidadesSeleccionadas)
     {
         if (id != alojamiento.Id)
         {
             return NotFound();
         }
 
-        if (ModelState.IsValid)
+        try
         {
-            try
+            // Obtener el alojamiento existente con sus relaciones
+            var alojamientoExistente = await _context.Alojamientos
+                .Include(a => a.DetallesAlojamientoComodidad)
+                .FirstOrDefaultAsync(a => a.Id == id);
+
+            if (alojamientoExistente == null)
             {
-                if (imagen != null && imagen.Length > 0)
-                {
-                    var uploadDir = Path.Combine(_webHostEnvironment.WebRootPath, "images/alojamientos");
-                    if (!Directory.Exists(uploadDir))
-                        Directory.CreateDirectory(uploadDir);
-
-                    var fileName = Guid.NewGuid().ToString() + Path.GetExtension(imagen.FileName);
-                    var filePath = Path.Combine(uploadDir, fileName);
-
-                    using (var fileStream = new FileStream(filePath, FileMode.Create))
-                    {
-                        await imagen.CopyToAsync(fileStream);
-                    }
-
-                    // Eliminar imagen anterior si existe
-                    if (!string.IsNullOrEmpty(alojamiento.ImagenUrl))
-                    {
-                        var oldImagePath = Path.Combine(_webHostEnvironment.WebRootPath, alojamiento.ImagenUrl.TrimStart('/'));
-                        if (System.IO.File.Exists(oldImagePath))
-                        {
-                            System.IO.File.Delete(oldImagePath);
-                        }
-                    }
-
-                    alojamiento.ImagenUrl = "/images/alojamientos/" + fileName;
-                }
-
-                // Actualizar comodidades
-                var existingDetails = await _context.DetallesAlojamientoComodidad
-                    .Where(d => d.IdAlojamiento == id)
-                    .ToListAsync();
-
-                _context.DetallesAlojamientoComodidad.RemoveRange(existingDetails);
-
-                if (ComodidadesSeleccionadas != null)
-                {
-                    foreach (var comodidadId in ComodidadesSeleccionadas)
-                    {
-                        var detalle = new DetalleAlojamientoComodidad
-                        {
-                            IdAlojamiento = alojamiento.Id,
-                            ComodidadId = comodidadId
-                        };
-                        _context.DetallesAlojamientoComodidad.Add(detalle);
-                    }
-                }
-
-                _context.Update(alojamiento);
-                await _context.SaveChangesAsync();
+                return NotFound();
             }
-            catch (DbUpdateConcurrencyException)
+
+            // Actualizar propiedades básicas
+            alojamientoExistente.Nombre = alojamiento.Nombre;
+            alojamientoExistente.Descripcion = alojamiento.Descripcion;
+            alojamientoExistente.Capacidad = alojamiento.Capacidad;
+            alojamientoExistente.TipoId = alojamiento.TipoId;
+
+            // Procesar nueva imagen si se proporcionó
+            if (imagen != null && imagen.Length > 0)
             {
-                if (!AlojamientoExists(alojamiento.Id))
+                var uploadDir = Path.Combine(_webHostEnvironment.WebRootPath, "images", "alojamientos");
+                Directory.CreateDirectory(uploadDir);
+
+                // Eliminar imagen anterior si existe
+                if (!string.IsNullOrEmpty(alojamientoExistente.ImagenUrl))
                 {
-                    return NotFound();
+                    var oldImagePath = Path.Combine(_webHostEnvironment.WebRootPath,
+                        alojamientoExistente.ImagenUrl.TrimStart('/'));
+                    if (System.IO.File.Exists(oldImagePath))
+                    {
+                        System.IO.File.Delete(oldImagePath);
+                    }
                 }
-                else
+
+                // Guardar nueva imagen
+                var fileName = Guid.NewGuid().ToString() + Path.GetExtension(imagen.FileName);
+                var filePath = Path.Combine(uploadDir, fileName);
+
+                using (var stream = new FileStream(filePath, FileMode.Create))
                 {
-                    throw;
+                    await imagen.CopyToAsync(stream);
+                }
+
+                alojamientoExistente.ImagenUrl = "/images/alojamientos/" + fileName;
+            }
+
+            // Actualizar comodidades
+            _context.DetallesAlojamientoComodidad.RemoveRange(
+                alojamientoExistente.DetallesAlojamientoComodidad);
+
+            if (ComodidadesSeleccionadas != null)
+            {
+                foreach (var comodidadId in ComodidadesSeleccionadas)
+                {
+                    var detalle = new DetalleAlojamientoComodidad
+                    {
+                        IdAlojamiento = id,
+                        ComodidadId = comodidadId
+                    };
+                    _context.DetallesAlojamientoComodidad.Add(detalle);
                 }
             }
+
+            await _context.SaveChangesAsync();
             return RedirectToAction(nameof(Index));
         }
+        catch (Exception ex)
+        {
+            ModelState.AddModelError("", "Ha ocurrido un error al guardar los cambios: " + ex.Message);
+            ViewBag.TipoId = new SelectList(_context.Tipos, "Id", "Nombre", alojamiento.TipoId);
+            ViewBag.Comodidades = new SelectList(_context.Comodidades.Where(c => c.Estado),
+                "Id", "Nombre");
+            return View(alojamiento);
+        }
+    }
 
-        ViewBag.TipoId = new SelectList(_context.Tipos, "Id", "Nombre", alojamiento.TipoId);
-        ViewBag.Comodidades = new SelectList(_context.Comodidades.Where(c => c.Estado), "Id", "Nombre");
+
+    // GET: Alojamiento/Details/5
+    public async Task<IActionResult> Details(int? id)
+    {
+        if (id == null)
+        {
+            return NotFound();
+        }
+
+        var alojamiento = await _context.Alojamientos
+            .Include(a => a.Tipo)
+            .Include(a => a.DetallesAlojamientoComodidad)
+                .ThenInclude(d => d.Comodidad)
+            .FirstOrDefaultAsync(m => m.Id == id);
+
+        if (alojamiento == null)
+        {
+            return NotFound();
+        }
+
         return View(alojamiento);
     }
 
